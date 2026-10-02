@@ -5,7 +5,7 @@
 [![Powered by Dockwa](https://raw.githubusercontent.com/dockwa/openpixel/dockwa/by-dockwa.png)](https://engineering.dockwa.com/)
 
 ## About
-Openpixel is a customizable JavaScript library for building tracking pixels. Openpixel sends each event as a web beacon (`navigator.sendBeacon`), a POST to the pixel endpoint. When the beacon is unavailable or the browser declines to queue it, it falls back to a keepalive `fetch` POST; the endpoint does not accept GET requests.
+Openpixel is a customizable JavaScript library for building tracking pixels. Openpixel sends each event as a web beacon (`navigator.sendBeacon`), a POST to the pixel endpoint. Browsers without beacon support send nothing, since the endpoint does not accept GET requests.
 
 At Dockwa we built openpixel to solve our own problems of implementing a tracking service that our marinas could put on their website to track traffic and attribution to the reservations coming through our platform.
 
@@ -116,3 +116,9 @@ Proposed fix: in `setup.js`, after `Cookie.setUtms()`, copy a UUID-shaped `eid` 
 `setup.js` reads and writes cookies at startup (`Cookie.exists('uid')`, `Cookie.set`, `Cookie.setUtms`) with no guard. In an opaque-origin sandbox, such as an iframe with `sandbox="allow-scripts"` but not `allow-same-origin`, the `document.cookie` getter and setter throw `SecurityError`, so the script stops before the queue is processed and no events are sent. That includes the server-injected `window.uptick_cookies` ids, which would otherwise still attribute the visit.
 
 Proposed fix: route every `document.cookie` access in `cookie.js` through two guarded helpers, `Cookie.read()` (returns `''` on error) and `Cookie.write()` (drops the write). Have `set` and `get` use them, and add a comment explaining why the error isn't reported (the host's sandbox choice isn't actionable). Events then still send, without a persistent `uid` or UTMs, and `Cookie.get` falls back to `window.uptick_cookies`.
+
+### The `window.uptick_cookies` fallback writes a malformed cookie
+
+When no first-party cookie matches, `Cookie.get(key)` falls back to `window.ppxdigital_cookies` / `window.uptick_cookies` and calls `this.set(name, value)` to keep it. By then `name` has been rewritten to the full prefixed form (`__ppxd_eid=`), and `set` prefixes it again, so it writes a cookie named `__ppxd___ppxd_eid=` instead of `__ppxd_eid`. The value is still returned, so the current page is attributed, but it never persists as the real cookie, and each key (`uid`, `eid`, `utm`) leaves one junk cookie behind.
+
+Proposed fix: keep the original key in `get` (for example `var cookieName = ...` instead of reassigning `name`) and pass that key to `set`. Both gaps above rely on this fallback.
