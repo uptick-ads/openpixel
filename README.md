@@ -5,7 +5,7 @@
 [![Powered by Dockwa](https://raw.githubusercontent.com/dockwa/openpixel/dockwa/by-dockwa.png)](https://engineering.dockwa.com/)
 
 ## About
-Openpixel is a customizable JavaScript library for building tracking pixels. Openpixel uses the latest technologies available with fall back support for older browsers. For example, if the browser supports web beacons, openpixel will send a web beacon, if it doesn't support them it will inject a 1x1 gif into the page with tracking information as part of the images get request.
+Openpixel is a customizable JavaScript library for building tracking pixels. Openpixel sends each event as a web beacon (`navigator.sendBeacon`), a POST to the pixel endpoint. Browsers without beacon support send nothing, since the endpoint does not accept GET requests.
 
 At Dockwa we built openpixel to solve our own problems of implementing a tracking service that our marinas could put on their website to track traffic and attribution to the reservations coming through our platform.
 
@@ -100,3 +100,25 @@ https://tracker.example.com/pixel.gif?id=R29X8&uid=1-ovbam3yz-iolwx617&ev=pagelo
 | utm_source_platform |              | Source platform                                                 |
 | utm_creative_format |              | Creative format                                                 |
 | utm_marketing_tactic |             | Marketing tactic                                                |
+
+## Known gaps
+
+### Purchases after the landing page lose attribution when third-party cookies are blocked
+
+The offer redirect (`Event::AcceptsController#show` in the platform) sends the visitor to the advertiser with `?eid=<event id>` and sets `__ppxd_eid` on our `app` domain. On the advertiser's site that cookie is third-party, so Safari, Firefox (Total Cookie Protection) and Brave never send it, and the `window.uptick_cookies` copy injected by `/e/pixel.js` comes back empty for the same reason.
+
+Only the landing page is attributed, because its `dl` still carries `?eid=`. A `purchase` on a later page goes out with no `eid`, and the server skips it as un-attributable (`Event::CreateConcern`, which returns 204).
+
+Proposed fix: in `setup.js`, after `Cookie.setUtms()`, copy a UUID-shaped `eid` from the landing URL into a first-party `__ppxd_eid` cookie for 60 minutes, matching the redirect cookie's lifetime. `Cookie.get('eid')` already reads that cookie and sends it as the `eid` param, which the server checks before cookies, so no server change is needed. It only helps when openpixel runs on the page the redirect lands on.
+
+### The pixel aborts before sending anything when `document.cookie` throws
+
+`setup.js` reads and writes cookies at startup (`Cookie.exists('uid')`, `Cookie.set`, `Cookie.setUtms`) with no guard. In an opaque-origin sandbox, such as an iframe with `sandbox="allow-scripts"` but not `allow-same-origin`, the `document.cookie` getter and setter throw `SecurityError`, so the script stops before the queue is processed and no events are sent. That includes the server-injected `window.uptick_cookies` ids, which would otherwise still attribute the visit.
+
+Proposed fix: route every `document.cookie` access in `cookie.js` through two guarded helpers, `Cookie.read()` (returns `''` on error) and `Cookie.write()` (drops the write). Have `set` and `get` use them, and add a comment explaining why the error isn't reported (the host's sandbox choice isn't actionable). Events then still send, without a persistent `uid` or UTMs, and `Cookie.get` falls back to `window.uptick_cookies`.
+
+### The `window.uptick_cookies` fallback writes a malformed cookie
+
+When no first-party cookie matches, `Cookie.get(key)` falls back to `window.ppxdigital_cookies` / `window.uptick_cookies` and calls `this.set(name, value)` to keep it. By then `name` has been rewritten to the full prefixed form (`__ppxd_eid=`), and `set` prefixes it again, so it writes a cookie named `__ppxd___ppxd_eid=` instead of `__ppxd_eid`. The value is still returned, so the current page is attributed, but it never persists as the real cookie, and each key (`uid`, `eid`, `utm`) leaves one junk cookie behind.
+
+Proposed fix: keep the original key in `get` (for example `var cookieName = ...` instead of reassigning `name`) and pass that key to `set`. Both gaps above rely on this fallback.

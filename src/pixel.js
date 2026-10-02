@@ -58,20 +58,10 @@ class Pixel {
   }
 
   send() {
-    window.navigator.sendBeacon ? this.sendBeacon() : this.sendImage();
-  }
-
-  sendBeacon() {
+    // The pixel endpoint only accepts POST, so without sendBeacon there is no working fallback, and a false return (not queued) isn't retried because a retry would hit the same keepalive quota and CSP.
+    // Neither case is actionable, so nothing is reported.
+    if (!window.navigator.sendBeacon) return;
     window.navigator.sendBeacon(this.getSourceUrl());
-  }
-
-  sendImage() {
-    this.img = document.createElement('img');
-    this.img.src = this.getSourceUrl();
-    this.img.style.display = 'none';
-    this.img.width = '1';
-    this.img.height = '1';
-    document.getElementsByTagName('body')[0].appendChild(this.img);
   }
 
   getSourceUrl() {
