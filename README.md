@@ -5,7 +5,7 @@
 [![Powered by Dockwa](https://raw.githubusercontent.com/dockwa/openpixel/dockwa/by-dockwa.png)](https://engineering.dockwa.com/)
 
 ## About
-Openpixel is a customizable JavaScript library for building tracking pixels. Openpixel uses the latest technologies available with fall back support for older browsers. For example, if the browser supports web beacons, openpixel will send a web beacon, if it doesn't support them it will inject a 1x1 gif into the page with tracking information as part of the images get request.
+Openpixel is a customizable JavaScript library for building tracking pixels. Openpixel sends each event as a web beacon (`navigator.sendBeacon`), a POST to the pixel endpoint. Browsers without beacon support send nothing, since the endpoint does not accept GET requests.
 
 At Dockwa we built openpixel to solve our own problems of implementing a tracking service that our marinas could put on their website to track traffic and attribution to the reservations coming through our platform.
 
