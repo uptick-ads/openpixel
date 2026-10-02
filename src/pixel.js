@@ -58,9 +58,14 @@ class Pixel {
   }
 
   send() {
-    // The pixel endpoint only accepts POST and sendBeacon is universal, so a browser without it has no working fallback and nothing actionable to report.
-    if (!window.navigator.sendBeacon) return;
-    window.navigator.sendBeacon(this.getSourceUrl());
+    const url = this.getSourceUrl();
+    if (window.navigator.sendBeacon && window.navigator.sendBeacon(url)) return;
+
+    // The pixel endpoint only accepts POST, so when the beacon is missing or not queued, retry with a keepalive fetch that also survives navigation.
+    if (!window.fetch) return;
+    window.fetch(url, { method: 'POST', keepalive: true, mode: 'no-cors', credentials: 'include' })
+      // no-cors hides the response and a failed send is a network condition we can't act on, so there is nothing to report.
+      .catch(() => {});
   }
 
   getSourceUrl() {
