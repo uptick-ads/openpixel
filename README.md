@@ -100,3 +100,19 @@ https://tracker.example.com/pixel.gif?id=R29X8&uid=1-ovbam3yz-iolwx617&ev=pagelo
 | utm_source_platform |              | Source platform                                                 |
 | utm_creative_format |              | Creative format                                                 |
 | utm_marketing_tactic |             | Marketing tactic                                                |
+
+## Known gaps
+
+### Purchases after the landing page lose attribution when third-party cookies are blocked
+
+The offer redirect (`Event::AcceptsController#show` in the platform) sends the visitor to the advertiser with `?eid=<event id>` and sets `__ppxd_eid` on our `app` domain. On the advertiser's site that cookie is third-party, so Safari, Firefox (Total Cookie Protection) and Brave never send it, and the `window.uptick_cookies` copy injected by `/e/pixel.js` comes back empty for the same reason.
+
+Only the landing page is attributed, because its `dl` still carries `?eid=`. A `purchase` on a later page goes out with no `eid`, and the server skips it as un-attributable (`Event::CreateConcern`, which returns 204).
+
+Proposed fix: in `setup.js`, after `Cookie.setUtms()`, copy a UUID-shaped `eid` from the landing URL into a first-party `__ppxd_eid` cookie for 60 minutes, matching the redirect cookie's lifetime. `Cookie.get('eid')` already reads that cookie and sends it as the `eid` param, which the server checks before cookies, so no server change is needed. It only helps when openpixel runs on the page the redirect lands on.
+
+### The pixel aborts before sending anything when `document.cookie` throws
+
+`setup.js` reads and writes cookies at startup (`Cookie.exists('uid')`, `Cookie.set`, `Cookie.setUtms`) with no guard. In an opaque-origin sandbox, such as an iframe with `sandbox="allow-scripts"` but not `allow-same-origin`, the `document.cookie` getter and setter throw `SecurityError`, so the script stops before the queue is processed and no events are sent. That includes the server-injected `window.uptick_cookies` ids, which would otherwise still attribute the visit.
+
+Proposed fix: route every `document.cookie` access in `cookie.js` through two guarded helpers, `Cookie.read()` (returns `''` on error) and `Cookie.write()` (drops the write). Have `set` and `get` use them, and add a comment explaining why the error isn't reported (the host's sandbox choice isn't actionable). Events then still send, without a persistent `uid` or UTMs, and `Cookie.get` falls back to `window.uptick_cookies`.
